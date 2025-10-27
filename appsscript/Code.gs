@@ -1,26 +1,47 @@
-// --- ⚙️ 설정 (이 부분은 이제 코드에서 직접 수정하지 않습니다) ---
+// =================================================================
+// ===================== ⚙️ 전역 설정 관리 ⚙️ =====================
+// =================================================================
 
-// 1. 스크립트 속성에서 API 키, 이메일, 사용자 이름을 불러옵니다.
-//    (좌측 '프로젝트 설정(⚙️)' > '스크립트 속성'에서 값을 관리합니다.)
-const scriptProperties = PropertiesService.getScriptProperties();
-const GEMINI_API_KEY = scriptProperties.getProperty('GEMINI_API_KEY');
-const REPORT_RECIPIENT_EMAIL = scriptProperties.getProperty('REPORT_RECIPIENT_EMAIL');
-const USER_NAME = scriptProperties.getProperty('USER_NAME');
+/**
+ * 프로젝트의 모든 주요 설정값을 객체 형태로 반환하는 함수입니다.
+ * 모든 설정은 이 함수 내에서 관리하여 안정성을 높입니다.
+ */
+function getProjectConfig() {
+  // 1. 스크립트 속성에서 민감한 정보를 불러옵니다.
+  const scriptProperties = PropertiesService.getScriptProperties();
+  
+  return {
+    // --- 민감 정보 (Script Properties에서 관리) ---
+    GEMINI_API_KEY: scriptProperties.getProperty('GEMINI_API_KEY'),
+    REPORT_RECIPIENT_EMAIL: scriptProperties.getProperty('REPORT_RECIPIENT_EMAIL'),
+    USER_NAME: scriptProperties.getProperty('USER_NAME'),
+
+    // --- 시트 및 파일 이름 설정 (여기서 직접 수정 가능) ---
+    RAW_DATA_SHEET_PREFIX: '운동데이터_',
+    STRUCTURED_LOG_SHEET: 'structured_log',
+    MAPPING_SHEET: '운동분류',
+    INBODY_SHEET: 'Inbody_data'
+  };
+}
+
+// --- 설정 끝 ---
+
 
 /**
  * 🛠️ 최초 1회만 실행하여 프로젝트를 설정하는 함수
  */
 function setup() {
+  const config = getProjectConfig(); // 설정값 불러오기
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  if (!ss.getSheetByName(STRUCTURED_LOG_SHEET)) {
-    const sheet = ss.insertSheet(STRUCTURED_LOG_SHEET);
+  if (!ss.getSheetByName(config.STRUCTURED_LOG_SHEET)) { // config. 변수명으로 사용
+    const sheet = ss.insertSheet(config.STRUCTURED_LOG_SHEET);
     const header = [
       '날짜', '운동명', '세트_구분', '세트번호', '무게(kg)', '횟수/시간', '단위', 
       '볼륨(kg)', '대분류', '도구', '움직임', '주동근'
     ];
     sheet.appendRow(header);
-    Logger.log(`'${STRUCTURED_LOG_SHEET}' 시트를 생성했습니다.`);
+    Logger.log(`'${config.STRUCTURED_LOG_SHEET}' 시트를 생성했습니다.`);
   }
 
   const triggers = ScriptApp.getProjectTriggers();
@@ -43,9 +64,10 @@ function setup() {
 // --- ⏰ 트리거 실행 함수들 ---
 
 function runOnEditTrigger(e) {
+  const config = getProjectConfig();
   try {
     const sheetName = e.source.getActiveSheet().getName();
-    if (sheetName.startsWith(RAW_DATA_SHEET_PREFIX)) {
+    if (sheetName.startsWith(config.RAW_DATA_SHEET_PREFIX)) {
       Utilities.sleep(10000); 
       updateStructuredLogSheet();
     }
@@ -68,10 +90,117 @@ function sendWeeklyReportTrigger() {
 }
 
 // --- 데이터 파싱 및 동기화 함수들 ---
-function updateStructuredLogSheet() { try { const infoMap = getExerciseInfoMap(); const ss = SpreadsheetApp.getActiveSpreadsheet(); const targetSheets = ss.getSheets().filter(sheet => sheet.getName().startsWith(RAW_DATA_SHEET_PREFIX)); if (targetSheets.length === 0) return; const allParsedData = []; targetSheets.forEach(sheet => { parseSheetData(sheet, infoMap, allParsedData); }); syncDataToSheet(allParsedData); Logger.log("데이터 변환 및 동기화 완료."); } catch (e) { Logger.log(`파싱/동기화 오류: ${e.stack}`); } }
-function getExerciseInfoMap() { const ss = SpreadsheetApp.getActiveSpreadsheet(); const mappingSheet = ss.getSheetByName(MAPPING_SHEET); if (!mappingSheet) throw new Error(`'${MAPPING_SHEET}' 시트 없음.`); const data = mappingSheet.getDataRange().getValues(); const map = {}; for (let i = 1; i < data.length; i++) { const name = data[i][0]; if (!name || name.startsWith('**')) continue; map[name.trim()] = { category: data[i][1]?.trim() || '미분류', calcMultiplier: (data[i][2] == 2) ? 2 : 1, tool: data[i][3]?.trim() || '', movement: data[i][4]?.trim() || '', target: data[i][5]?.trim() || '' }; } return map; }
-function parseSheetData(sheet, infoMap, allParsedData) { const data = sheet.getDataRange().getValues(); const datePattern = /(\d{4})[-.\s]*(\d{1,2})[-.\s]*(\d{1,2}).*/; const setPattern = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(kg|lbs)\s*([\d.]+)\s*(?:회|reps)/i; const setPatternRepsOnly = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(?:회|reps)/i; const setPatternTime = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(초|분|시간|min|sec|s)/i; const LBS_TO_KG = 0.453592; let currentDate = null; let currentExercise = null; for (const row of data) { const line = row[0].toString().trim(); if (!line || line.includes("기록이 몸을 만든다")) continue; let dateMatch = line.match(datePattern); if (dateMatch) { currentDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`; currentExercise = null; continue; } if (!line.includes(':') && !/^\d/.test(line) && isNaN(line[0])) { currentExercise = line.trim(); continue; } if (currentDate && currentExercise) { let match, setType = '본세트', setNumStr, weight = 0, repsOrTime = 0, unit = '', volume = 0; if (line.includes('(F)')) setType = '실패세트'; else if (line.includes('(D)')) setType = '드롭세트'; else if (line.toLowerCase().startsWith('warm-up')) setType = '웜업'; if (match = line.match(setPattern)) { setNumStr = match[1]; let rawWeight = parseFloat(match[3]); weight = (match[4].toLowerCase() === 'lbs') ? rawWeight * LBS_TO_KG : rawWeight; repsOrTime = parseFloat(match[5]); unit = '회'; } else if (match = line.match(setPatternRepsOnly)) { setNumStr = match[1]; repsOrTime = parseFloat(match[3]); unit = '회'; } else if (match = line.match(setPatternTime)) { setNumStr = match[1]; repsOrTime = parseFloat(match[3]); unit = (match[4].toLowerCase() === '분' || match[4] === 'min') ? '분' : '초'; } else { continue; } const setNum = setType === '웜업' ? 'Warm-up' : (setNumStr || '1'); const info = infoMap[currentExercise] || { category: '미분류', calcMultiplier: 1, tool: '', movement: '', target: '' }; if (unit === '회') { volume = weight * repsOrTime * info.calcMultiplier; } allParsedData.push([currentDate, currentExercise, setType, setNum, weight, repsOrTime, unit, volume, info.category, info.tool, info.movement, info.target]); } } }
-function syncDataToSheet(allData) { const ss = SpreadsheetApp.getActiveSpreadsheet(); const logSheet = ss.getSheetByName(STRUCTURED_LOG_SHEET); allData.sort((a, b) => { if (a[0] > b[0]) return 1; if (a[0] < b[0]) return -1; if (a[1] > b[1]) return 1; if (a[1] < b[1]) return -1; const setA = isNaN(a[3]) ? 0 : parseInt(a[3]); const setB = isNaN(b[3]) ? 0 : parseInt(b[3]); return setA - setB; }); if (logSheet.getLastRow() > 1) { logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).clearContent(); } if (allData.length > 0) { logSheet.getRange(2, 1, allData.length, allData[0].length).setValues(allData); } }
+function updateStructuredLogSheet() { 
+  const config = getProjectConfig();
+  try { 
+    const infoMap = getExerciseInfoMap(); 
+    const ss = SpreadsheetApp.getActiveSpreadsheet(); 
+    const targetSheets = ss.getSheets().filter(sheet => sheet.getName().startsWith(config.RAW_DATA_SHEET_PREFIX)); 
+    if (targetSheets.length === 0) return; 
+    const allParsedData = []; 
+    targetSheets.forEach(sheet => { parseSheetData(sheet, infoMap, allParsedData); }); 
+    syncDataToSheet(allParsedData); 
+    Logger.log("데이터 변환 및 동기화 완료."); 
+  } catch (e) { 
+    Logger.log(`파싱/동기화 오류: ${e.stack}`); 
+  } 
+}
+
+function getExerciseInfoMap() { 
+  const config = getProjectConfig();
+  const ss = SpreadsheetApp.getActiveSpreadsheet(); 
+  const mappingSheet = ss.getSheetByName(config.MAPPING_SHEET); 
+  if (!mappingSheet) throw new Error(`'${config.MAPPING_SHEET}' 시트 없음.`); 
+  const data = mappingSheet.getDataRange().getValues(); 
+  const map = {}; 
+  for (let i = 1; i < data.length; i++) { 
+    const name = data[i][0]; 
+    if (!name || name.startsWith('**')) continue; 
+    map[name.trim()] = { 
+      category: data[i][1]?.trim() || '미분류', 
+      calcMultiplier: (data[i][2] == 2) ? 2 : 1, 
+      tool: data[i][3]?.trim() || '', 
+      movement: data[i][4]?.trim() || '', 
+      target: data[i][5]?.trim() || '' 
+    }; 
+  } 
+  return map; 
+}
+
+function parseSheetData(sheet, infoMap, allParsedData) { 
+  const data = sheet.getDataRange().getValues(); 
+  const datePattern = /(\d{4})[-.\s]*(\d{1,2})[-.\s]*(\d{1,2}).*/; 
+  const setPattern = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(kg|lbs)\s*([\d.]+)\s*(?:회|reps)/i; 
+  const setPatternRepsOnly = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(?:회|reps)/i; 
+  const setPatternTime = /^(?:(\d+)\s*세트|Warm-up)\s*(?:\((F|D)\))?:\s*([\d.]+)\s*(초|분|시간|min|sec|s)/i; 
+  const LBS_TO_KG = 0.453592; 
+  let currentDate = null; 
+  let currentExercise = null; 
+  for (const row of data) { 
+    const line = row[0].toString().trim(); 
+    if (!line || line.includes("기록이 몸을 만든다")) continue; 
+    let dateMatch = line.match(datePattern); 
+    if (dateMatch) { 
+      currentDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`; 
+      currentExercise = null; 
+      continue; 
+    } 
+    if (!line.includes(':') && !/^\d/.test(line) && isNaN(line[0])) { 
+      currentExercise = line.trim(); 
+      continue; 
+    } 
+    if (currentDate && currentExercise) { 
+      let match, setType = '본세트', setNumStr, weight = 0, repsOrTime = 0, unit = '', volume = 0; 
+      if (line.includes('(F)')) setType = '실패세트'; 
+      else if (line.includes('(D)')) setType = '드롭세트'; 
+      else if (line.toLowerCase().startsWith('warm-up')) setType = '웜업'; 
+      if (match = line.match(setPattern)) { 
+        setNumStr = match[1]; 
+        let rawWeight = parseFloat(match[3]); 
+        weight = (match[4].toLowerCase() === 'lbs') ? rawWeight * LBS_TO_KG : rawWeight; 
+        repsOrTime = parseFloat(match[5]); 
+        unit = '회'; 
+      } else if (match = line.match(setPatternRepsOnly)) { 
+        setNumStr = match[1]; 
+        repsOrTime = parseFloat(match[3]); 
+        unit = '회'; 
+      } else if (match = line.match(setPatternTime)) { 
+        setNumStr = match[1]; 
+        repsOrTime = parseFloat(match[3]); 
+        unit = (match[4].toLowerCase() === '분' || match[4] === 'min') ? '분' : '초'; 
+      } else { 
+        continue; 
+      } 
+      const setNum = setType === '웜업' ? 'Warm-up' : (setNumStr || '1'); 
+      const info = infoMap[currentExercise] || { category: '미분류', calcMultiplier: 1, tool: '', movement: '', target: '' }; 
+      if (unit === '회') { 
+        volume = weight * repsOrTime * info.calcMultiplier; 
+      } 
+      allParsedData.push([currentDate, currentExercise, setType, setNum, weight, repsOrTime, unit, volume, info.category, info.tool, info.movement, info.target]); 
+    } 
+  } 
+}
+
+function syncDataToSheet(allData) { 
+  const config = getProjectConfig();
+  const ss = SpreadsheetApp.getActiveSpreadsheet(); 
+  const logSheet = ss.getSheetByName(config.STRUCTURED_LOG_SHEET); 
+  allData.sort((a, b) => { 
+    if (a[0] > b[0]) return 1; 
+    if (a[0] < b[0]) return -1; 
+    if (a[1] > b[1]) return 1; 
+    if (a[1] < b[1]) return -1; 
+    const setA = isNaN(a[3]) ? 0 : parseInt(a[3]); 
+    const setB = isNaN(b[3]) ? 0 : parseInt(b[3]); 
+    return setA - setB; 
+  }); 
+  if (logSheet.getLastRow() > 1) { 
+    logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).clearContent(); 
+  } 
+  if (allData.length > 0) { 
+    logSheet.getRange(2, 1, allData.length, allData[0].length).setValues(allData); 
+  } 
+}
 
 // =================================================================
 // ================= ✨ 4단계 고도화 아키텍처 적용 ✨ =================
@@ -81,11 +210,12 @@ function syncDataToSheet(allData) { const ss = SpreadsheetApp.getActiveSpreadshe
  * 📨 [고도화됨] 4단계 추론(루틴 추천 포함)을 사용하여 리포트 생성 및 발송을 총괄
  */
 function sendReport(reportType) {
+  const config = getProjectConfig();
   try {
     Logger.log(`[${reportType}] 4단계 리포트 생성을 시작합니다.`);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const logSheet = ss.getSheetByName(STRUCTURED_LOG_SHEET);
-    const inbodySheet = ss.getSheetByName(INBODY_SHEET);
+    const logSheet = ss.getSheetByName(config.STRUCTURED_LOG_SHEET);
+    const inbodySheet = ss.getSheetByName(config.INBODY_SHEET);
 
     if (!logSheet || !inbodySheet) throw new Error("필수 시트를 찾을 수 없습니다.");
     
@@ -113,13 +243,14 @@ function sendReport(reportType) {
     Logger.log(`[${reportType}] 4단계: 최종 리포트 생성 시작`);
     const reportHtml = callGeminiAPI(createFinalReportPrompt(stats, reportType, tacticalAnalysis, recommendedRoutine), 'html');
     
-    const subject = `💪 ${stats.userName}님, ${stats.periodName} 운동 리포트 + 맞춤 루틴이 도착했습니다!`;
-    MailApp.sendEmail({ to: REPORT_RECIPIENT_EMAIL, subject: subject, htmlBody: reportHtml });
+    const subject = `💪 ${config.USER_NAME}님, ${stats.periodName} 운동 리포트 + 맞춤 루틴이 도착했습니다!`;
+    MailApp.sendEmail({ to: config.REPORT_RECIPIENT_EMAIL, subject: subject, htmlBody: reportHtml });
     Logger.log(`[${reportType}] 리포트 이메일을 성공적으로 발송했습니다.`);
 
   } catch (e) {
     Logger.log(`[${reportType}] 리포트 생성 오류: ${e.toString()}\n${e.stack}`);
-    MailApp.sendEmail(REPORT_RECIPIENT_EMAIL, `🚨 [${reportType}] 운동 리포트 생성 오류`, `오류가 발생했습니다: ${e.message}\n\n${e.stack}`);
+    const config = getProjectConfig();
+    MailApp.sendEmail(config.REPORT_RECIPIENT_EMAIL, `🚨 [${reportType}] 운동 리포트 생성 오류`, `오류가 발생했습니다: ${e.message}\n\n${e.stack}`);
   }
 }
 
@@ -127,49 +258,50 @@ function sendReport(reportType) {
  * [최종 고도화] 현재/이전 기간 데이터 및 '평균 주당 운동일수'를 함께 분석하는 함수
  */
 function analyzeDataForPeriod(logSheet, inbodySheet, periodType) {
+  const config = getProjectConfig();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
   const formatDate = (date) => Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   
   let startDate, endDate, prevStartDate, prevEndDate, periodName;
-  let weeksInPeriod = 1; // 기본값은 1주
+  let weeksInPeriod = 1;
 
   switch(periodType) {
     case 'week':
-      const dayOfWeek = today.getDay(); // 0(일) ~ 6(토)
-      endDate = new Date(today.getTime() - (dayOfWeek + 1) * 24 * 60 * 60 * 1000); // 지난주 토요일
-      startDate = new Date(endDate.getTime() - 6 * 24 * 60 * 60 * 1000); // 그로부터 6일 전 (일요일)
-      prevEndDate = new Date(startDate.getTime() - 1); // 지지난주 토요일
-      prevStartDate = new Date(prevEndDate.getTime() - 6 * 24 * 60 * 60 * 1000); // 지지난주 일요일
+      const dayOfWeek = today.getDay();
+      endDate = new Date(today.getTime() - (dayOfWeek + 1) * 24 * 60 * 60 * 1000);
+      startDate = new Date(endDate.getTime() - 6 * 24 * 60 * 60 * 1000);
+      prevEndDate = new Date(startDate.getTime() - 1);
+      prevStartDate = new Date(prevEndDate.getTime() - 6 * 24 * 60 * 60 * 1000);
       periodName = '주간';
       weeksInPeriod = 1;
       break;
     case 'month':
-      endDate = new Date(today.getFullYear(), today.getMonth(), 0); // 지난달 말일
-      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1); // 지난달 1일
-      prevEndDate = new Date(startDate.getTime() - 1); // 지지난달 말일
-      prevStartDate = new Date(prevEndDate.getFullYear(), prevEndDate.getMonth(), 1); // 지지난달 1일
+      endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+      prevEndDate = new Date(startDate.getTime() - 1);
+      prevStartDate = new Date(prevEndDate.getFullYear(), prevEndDate.getMonth(), 1);
       periodName = `${startDate.getFullYear()}년 ${startDate.getMonth() + 1}월`;
-      weeksInPeriod = 4.345; // 월 평균 주 수
+      weeksInPeriod = 4.345;
       break;
     case 'quarter':
-      const currentQuarter = Math.floor(today.getMonth() / 3); // 0, 1, 2, 3 (1/4분기 ~ 4/4분기)
-      endDate = new Date(today.getFullYear(), currentQuarter * 3, 0); // 지난 분기 말일
-      startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1); // 지난 분기 시작일
-      prevEndDate = new Date(startDate.getTime() - 1); // 지지난 분기 말일
-      prevStartDate = new Date(prevEndDate.getFullYear(), prevEndDate.getMonth() - 2, 1); // 지지난 분기 시작일
+      const currentQuarter = Math.floor(today.getMonth() / 3);
+      endDate = new Date(today.getFullYear(), currentQuarter * 3, 0);
+      startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 2, 1);
+      prevEndDate = new Date(startDate.getTime() - 1);
+      prevStartDate = new Date(prevEndDate.getFullYear(), prevEndDate.getMonth() - 2, 1);
       periodName = `${startDate.getFullYear()}년 ${Math.floor(startDate.getMonth() / 3) + 1}분기`;
-      weeksInPeriod = 13; // 분기 평균 주 수
+      weeksInPeriod = 13;
       break;
     case 'year':
       const lastYear = today.getFullYear() - 1;
-      endDate = new Date(lastYear, 11, 31); // 작년 12월 31일
-      startDate = new Date(lastYear, 0, 1); // 작년 1월 1일
-      prevEndDate = new Date(startDate.getTime() - 1); // 재작년 12월 31일
-      prevStartDate = new Date(prevEndDate.getFullYear(), 0, 1); // 재작년 1월 1일
+      endDate = new Date(lastYear, 11, 31);
+      startDate = new Date(lastYear, 0, 1);
+      prevEndDate = new Date(startDate.getTime() - 1);
+      prevStartDate = new Date(prevEndDate.getFullYear(), 0, 1);
       periodName = `${lastYear}년 연간`;
-      weeksInPeriod = 52; // 연 평균 주 수
+      weeksInPeriod = 52;
       break;
   }
   
@@ -216,11 +348,8 @@ function analyzeDataForPeriod(logSheet, inbodySheet, periodType) {
   const currentStats = extractStatsForPeriod(startDateStr, endDateStr);
   const previousStats = extractStatsForPeriod(prevStartDateStr, prevEndDateStr);
 
-  // [신규] ✨ 평균 주당 운동 횟수 계산 ✨
-  // periodType에 따라 동적으로 계산되며, 운동일수가 0일 경우에도 안전하게 0을 반환
   const avgWorkoutDaysPerWeek = (currentStats.totalWorkoutDays > 0) ? Math.max(1, Math.round(currentStats.totalWorkoutDays / weeksInPeriod)) : 0;
 
-  // PR 분석 (이전 모든 기록과 비교)
   const previousAllData = allTimeData.filter(r => formatDate(new Date(r[dateIdx])) < startDateStr && r[exerciseIdx] === currentStats.bestPerformance.exercise);
   const previousBestWeight = previousAllData.reduce((max, r) => Math.max(max, r[weightIdx]), 0);
   let pr = { exercise: '없음', record: '' };
@@ -229,7 +358,6 @@ function analyzeDataForPeriod(logSheet, inbodySheet, periodType) {
     pr.record = `${currentStats.bestPerformance.weight.toFixed(1)}kg x ${currentStats.bestPerformance.reps}회`;
   }
 
-  // 인바디 분석
   const startInbody = inbodyData.slice(1).filter(r => formatDate(new Date(r[0])) < startDateStr).pop() || Array(6).fill('N/A');
   const endInbody = inbodyData.slice(1).filter(r => formatDate(new Date(r[0])) <= endDateStr).pop() || startInbody;
   
@@ -237,10 +365,10 @@ function analyzeDataForPeriod(logSheet, inbodySheet, periodType) {
   const formatPercent = val => (typeof val === 'number' ? (val * 100).toFixed(1) + '%' : (val || 'N/A'));
 
   return {
-    userName: USER_NAME, periodName, startDate: startDateStr, endDate: endDateStr,
+    userName: config.USER_NAME, periodName, startDate: startDateStr, endDate: endDateStr,
     current: currentStats,
     previous: previousStats,
-    avgWorkoutDaysPerWeek, // [신규] 계산된 평균 운동 빈도 추가
+    avgWorkoutDaysPerWeek,
     prExercise: pr.exercise, prRecord: pr.record,
     endWeight: `${endInbody[2]} kg${getChange(endInbody[2], startInbody[2])}`,
     endMuscleMass: `${endInbody[3]} kg${getChange(endInbody[3], startInbody[3])}`,
@@ -366,15 +494,14 @@ ${recommendedRoutine}
 }
 
 /**
- * [최종 수정] Gemini API 호출 함수 (토큰 제한 상향 및 모델명 수정)
+ * [강화됨] Gemini API 호출 함수 (재시도 로직 추가)
  */
 function callGeminiAPI(prompt, responseType = 'html') {
-  // [수정됨] API 키 확인 로직을 원래대로 복구
-  if (GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY' || !GEMINI_API_KEY) {
+  const config = getProjectConfig();
+  if (config.GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY' || !config.GEMINI_API_KEY) {
     throw new Error("Gemini API 키가 설정되지 않았습니다. 스크립트 상단의 GEMINI_API_KEY를 확인해주세요.");
   }
-  // [수정] 최신 안정화 모델 이름으로 변경
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${config.GEMINI_API_KEY}`;
   
   const payload = {
     "contents": [{ "parts": [{ "text": prompt }] }],
@@ -382,13 +509,29 @@ function callGeminiAPI(prompt, responseType = 'html') {
       "temperature": 0.6, 
       "topK": 1, 
       "topP": 1, 
-      // [수정] 최대 출력 토큰 수를 최대로 늘려서 잘림 현상 방지
       "maxOutputTokens": 65536
     }
   };
   const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(payload), 'muteHttpExceptions': true };
   
-  const response = UrlFetchApp.fetch(url, options);
+  // --- ✨ 재시도 로직 시작 ✨ ---
+  let response;
+  const maxRetries = 3; // 최대 3번 시도
+  for (let i = 0; i < maxRetries; i++) {
+    response = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+    
+    // 성공(200)했거나, 재시도해도 소용없는 클라이언트 오류(4xx)이면 루프 중단
+    if (responseCode === 200 || (responseCode >= 400 && responseCode < 500)) {
+      break;
+    }
+    
+    // 재시도할 서버 오류(5xx)인 경우
+    Logger.log(`API 호출 실패 (시도 ${i + 1}/${maxRetries}), 응답 코드: ${responseCode}. 5초 후 재시도합니다.`);
+    Utilities.sleep(5000); // 5초 대기
+  }
+  // --- ✨ 재시도 로직 끝 ✨ ---
+
   const responseCode = response.getResponseCode();
   const responseText = response.getContentText();
   
@@ -437,17 +580,10 @@ function doGet(e) {
  */
 function processUserMessage(message) {
   try {
-    // 1단계: 사용자의 질문을 분석하여 필요한 '도구'와 '검색 조건'을 JSON 형태로 추출
     const toolCalls = routeQueryToTools(message);
-    
-    // 2단계: 결정된 각 '도구'를 실행하여 관련 데이터를 검색하고 결과를 취합
     const retrievedData = executeToolCalls(toolCalls);
-    
-    // 3단계: 검색된 모든 데이터를 근거로 AI에게 최종 답변 생성 요청
     const finalAnswer = generateFinalResponse(message, retrievedData);
-    
     return finalAnswer;
-
   } catch (e) {
     Logger.log(`챗봇 오류: ${e.stack}`);
     return `처리 중 오류가 발생했습니다: ${e.message}`;
@@ -530,8 +666,9 @@ function executeToolCalls(toolCalls) {
  * [Tool] 운동 기록을 검색하는 도구 함수
  */
 function findWorkoutData(conditions) {
+  const config = getProjectConfig();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const logSheet = ss.getSheetByName(STRUCTURED_LOG_SHEET);
+  const logSheet = ss.getSheetByName(config.STRUCTURED_LOG_SHEET);
   const allData = logSheet.getRange("A2:H" + logSheet.getLastRow()).getValues();
 
   const [dateIdx, exerciseIdx, , , weightIdx, repsIdx, , volumeIdx] = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -572,8 +709,9 @@ function findWorkoutData(conditions) {
  * [Tool] 인바디 기록을 검색하는 도구 함수
  */
 function findInbodyData(conditions) {
+  const config = getProjectConfig();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inbodySheet = ss.getSheetByName(INBODY_SHEET);
+  const inbodySheet = ss.getSheetByName(config.INBODY_SHEET);
   const allData = inbodySheet.getRange("A2:F" + inbodySheet.getLastRow()).getValues();
   const [dateIdx, , weightIdx, muscleIdx, , fatPercentIdx] = [0, 1, 2, 3, 4, 5];
 
