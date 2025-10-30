@@ -413,7 +413,7 @@ function callGeminiAPI(prompt, responseType = 'text') {
   if (!config.GEMINI_API_KEY || config.GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
     throw new Error("Gemini API 키가 설정되지 않았습니다.");
   }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${config.GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${config.GEMINI_API_KEY}`;
   const payload = {
     "contents": [{ "parts": [{ "text": prompt }] }],
     "generationConfig": { "temperature": 0.6, "topK": 1, "topP": 1, "maxOutputTokens": 8192 }
