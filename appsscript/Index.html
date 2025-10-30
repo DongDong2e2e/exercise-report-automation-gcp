@@ -3,27 +3,33 @@
 <head>
   <base target="_top">
   <style>
-    body { font-family: sans-serif; margin: 0; padding: 10px; background-color: #f4f4f9; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; margin: 0; padding: 10px; background-color: #f4f4f9; }
     #chat-container { max-width: 700px; margin: auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 90vh; }
     #chat-log { flex-grow: 1; overflow-y: auto; padding: 20px; border-bottom: 1px solid #ddd; }
-    .message { margin-bottom: 15px; }
-    .user-message { text-align: right; }
-    .user-message p { background-color: #007bff; color: white; display: inline-block; padding: 10px 15px; border-radius: 15px 15px 0 15px; max-width: 80%; }
-    .ai-message p { background-color: #e9e9eb; color: #333; display: inline-block; padding: 10px 15px; border-radius: 15px 15px 15px 0; max-width: 80%; white-space: pre-wrap; }
+    .message { margin-bottom: 15px; display: flex; flex-direction: column; }
+    .user-message { align-items: flex-end; }
+    .ai-message { align-items: flex-start; }
+    .message p { padding: 10px 15px; max-width: 80%; line-height: 1.5; }
+    .user-message p { background-color: #007bff; color: white; border-radius: 15px 15px 0 15px; }
+    .ai-message p { background-color: #e9e9eb; color: #333; border-radius: 15px 15px 15px 0; white-space: pre-wrap; }
+    /* [추가됨] 마크다운 스타일 */
+    .ai-message p strong { font-weight: 600; }
+    .ai-message p ul { padding-left: 20px; margin: 5px 0; }
     #input-area { display: flex; padding: 10px; }
     #user-input { flex-grow: 1; border: 1px solid #ccc; border-radius: 20px; padding: 10px 15px; font-size: 16px; }
-    #send-button { background-color: #007bff; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; margin-left: 10px; font-size: 20px; cursor: pointer; }
+    #send-button { background-color: #007bff; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; margin-left: 10px; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
     .loader { text-align: center; }
   </style>
 </head>
 <body>
   <div id="chat-container">
     <div id="chat-log">
-      <div class="ai-message"><p>안녕하세요, 최동휘님! 저는 당신의 운동 기록을 분석해주는 AI 피트니스 비서 '버니'입니다. 무엇이 궁금하신가요?</p></div>
+      <!-- 첫 인사는 스크립트에서 동적으로 설정됩니다. -->
     </div>
     <div id="input-area">
       <input type="text" id="user-input" placeholder="지난 주 스쿼트 기록 알려줘...">
-      <button id="send-button">→</button>
+      <!-- [수정됨] 접근성을 위한 title 속성 추가 -->
+      <button id="send-button" title="메시지 보내기">→</button>
     </div>
   </div>
 
@@ -32,14 +38,29 @@
     const userInput = document.getElementById('user-input');
     const sendButton = document.getElementById('send-button');
 
+    // [추가됨] 마크다운을 HTML로 변환하는 간단한 파서
+    function simpleMarkdownParser(text) {
+        // **bold** -> <strong>bold</strong>
+        text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        // * list -> <ul><li>list</li></ul> (간단한 목록 처리)
+        text = text.replace(/^\s*\*\s(.*)/gm, '<ul><li>$1</li></ul>');
+        text = text.replace(/<\/ul>\n<ul>/g, ''); // 연속된 목록 합치기
+        return text;
+    }
+
+    // [수정됨] 메시지 추가 함수 (HTML 렌더링 지원)
     function appendMessage(sender, text) {
       const messageDiv = document.createElement('div');
       messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
       
       const p = document.createElement('p');
-      p.textContent = text;
-      messageDiv.appendChild(p);
+      if (sender === 'ai') {
+        p.innerHTML = simpleMarkdownParser(text); // AI 메시지는 마크다운 파싱
+      } else {
+        p.textContent = text; // 사용자 메시지는 텍스트 그대로
+      }
       
+      messageDiv.appendChild(p);
       chatLog.appendChild(messageDiv);
       chatLog.scrollTop = chatLog.scrollHeight;
     }
@@ -47,7 +68,7 @@
     function showLoader() {
       const loaderDiv = document.createElement('div');
       loaderDiv.id = 'loader';
-      loaderDiv.classList.add('ai-message');
+      loaderDiv.classList.add('message', 'ai-message');
       loaderDiv.innerHTML = '<p>분석 중입니다... 잠시만 기다려주세요! 🤖</p>';
       chatLog.appendChild(loaderDiv);
       chatLog.scrollTop = chatLog.scrollHeight;
@@ -88,9 +109,24 @@
         .processUserMessage(message);
     }
 
+    // [추가됨] 웹 앱이 로드될 때 사용자 이름을 가져와 첫 인사를 설정하는 기능
+    window.addEventListener('DOMContentLoaded', () => {
+      google.script.run
+        .withSuccessHandler(userInfo => {
+          const welcomeMessage = `안녕하세요, ${userInfo.name}님! 저는 당신의 운동 기록을 분석해주는 AI 피트니스 비서 '버니'입니다. 무엇이 궁금하신가요?`;
+          appendMessage('ai', welcomeMessage);
+        })
+        .withFailureHandler(error => {
+          const welcomeMessage = `안녕하세요! 저는 당신의 운동 기록을 분석해주는 AI 피트니스 비서 '버니'입니다. 무엇이 궁금하신가요?`;
+          appendMessage('ai', welcomeMessage); // 실패 시 기본 메시지
+        })
+        .getUserInfo();
+    });
+
     sendButton.addEventListener('click', handleSend);
     userInput.addEventListener('keydown', event => {
-      if (event.key === 'Enter') {
+      if (event.key === 'Enter' && !event.shiftKey) { // Shift+Enter는 줄바꿈 허용
+        event.preventDefault(); // Enter키 기본 동작(줄바꿈) 방지
         handleSend();
       }
     });
