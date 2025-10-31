@@ -26,7 +26,7 @@ Google Sheets에 텍스트로 작성된 운동일지를 AI가 자동으로 분�
 
 ### 🛠️ 기술 스택 (Tech Stack)
 *   **Backend:** Google Apps Script (JavaScript)
-*   **AI:** Google Gemini 1.5 Pro
+*   **AI:** Google Gemini 2.5 Pro
 *   **Database:** Google Sheets
 *   **Frontend:** HTML, CSS, JavaScript, **Chart.js**
 
